@@ -80,7 +80,7 @@ export default function CandidateTable({
           <svg className="h-4 w-4 text-slate-500" viewBox="0 0 20 20" fill="currentColor">
             <path fillRule="evenodd" d="M.99 5.24A2.25 2.25 0 0 1 3.25 3h13.5A2.25 2.25 0 0 1 19 5.25l.01 9.5A2.25 2.25 0 0 1 16.76 17H3.26A2.267 2.267 0 0 1 1 14.74l-.01-9.5Zm8.26 9.52v-.001a.75.75 0 0 0 1.048.227 8.16 8.16 0 0 0 1.792-1.709.75.75 0 1 0-1.176-.937 6.63 6.63 0 0 1-.823.78l-.051-.014a.75.75 0 0 0-.79 1.654Zm4.816-8.027a8.145 8.145 0 0 0-2.003-1.394.75.75 0 1 0-.653 1.35 6.645 6.645 0 0 1 1.633 1.137.75.75 0 1 0 1.023-1.093ZM9.255 5.504A.75.75 0 0 0 8 5.75a6.633 6.633 0 0 1-1.452 4.17.75.75 0 1 0 1.17.94A8.133 8.133 0 0 0 9.503 6.25a.75.75 0 0 0-.248-.746Z" clipRule="evenodd" />
           </svg>
-          <span className="text-sm font-semibold text-slate-200">Candidate Pipeline — Strategic Context</span>
+          <span className="text-sm font-semibold text-slate-200">Candidate Pipeline — Complete Profiles</span>
           <span className="rounded-full bg-slate-700/60 border border-slate-600/40 px-2 py-0.5 text-xs font-medium text-slate-400">
             {isFiltered
               ? `${filteredCandidates.length} of ${candidates.length}`
@@ -126,7 +126,7 @@ export default function CandidateTable({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-700/40 bg-slate-800/30">
-                {["Candidate & Sentiment", "Role & Market Overlay", "Top Skills", "Exp.", "Execute Action", "Added"].map((h) => (
+                {["Candidate & Sentiment", "Contact Details", "Role & Market Overlay", "Top Skills", "Exp.", "Execute Action", "Added"].map((h) => (
                   <th
                     key={h}
                     className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap"
@@ -160,6 +160,36 @@ export default function CandidateTable({
                           reasoning="High executive competency match"
                         />
                       </div>
+                    </div>
+                  </td>
+
+                  {/* Contact Details (Always Visible) */}
+                  <td className="px-4 py-3.5 whitespace-nowrap">
+                    <div className="flex flex-col gap-1 text-xs">
+                      {c.email && c.email !== "Not found" ? (
+                        <a
+                          href={`mailto:${c.email}`}
+                          className="flex items-center gap-1.5 text-violet-400 hover:text-violet-300 font-medium truncate max-w-[170px] transition-colors"
+                          title={c.email}
+                        >
+                          <span className="text-[11px]">✉️</span>
+                          <span className="truncate">{c.email}</span>
+                        </a>
+                      ) : (
+                        <span className="text-slate-600 italic text-[11px]">No email</span>
+                      )}
+                      {c.phone && c.phone !== "Not found" ? (
+                        <a
+                          href={`tel:${c.phone}`}
+                          className="flex items-center gap-1.5 text-slate-300 hover:text-white font-mono text-[11px] transition-colors"
+                          title={c.phone}
+                        >
+                          <span className="text-[11px]">📞</span>
+                          <span>{c.phone}</span>
+                        </a>
+                      ) : (
+                        <span className="text-slate-600 italic text-[11px]">No phone</span>
+                      )}
                     </div>
                   </td>
 
