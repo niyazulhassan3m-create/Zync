@@ -171,6 +171,7 @@ function fallbackResumeParser(text, filename) {
     "Java", "C++", "AWS", "Docker", "Git", "Sales", "Marketing", "Finance",
     "Accounting", "Legal", "Project Management", "Leadership", "Communication",
     "Analytics", "UI/UX", "Design", "Healthcare", "Operations"
+  ];
   const foundSkills = SKILL_KEYWORDS.filter((s) => text.toLowerCase().includes(s.toLowerCase()));
   const skills = foundSkills.length > 0 ? foundSkills.slice(0, 3) : ["Executive Management", "Strategic Planning"];
 
@@ -1325,8 +1326,8 @@ app.get("/api/health", (_req, res) => {
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`\n🚀  Zync powered by Lab-Y API running on http://localhost:${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`\n🚀  Zync powered by Lab-Y API running on http://127.0.0.1:${PORT}`);
   console.log(`    POST   /api/parse-resume                   — upload a PDF resume`);
   console.log(`    GET    /api/candidates                      — list candidates`);
   console.log(`    GET    /api/zync/workspace                  — fetch workspace activation status`);
