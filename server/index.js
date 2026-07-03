@@ -171,8 +171,7 @@ function fallbackResumeParser(text, filename) {
     "Java", "C++", "AWS", "Docker", "Git", "Sales", "Marketing", "Finance",
     "Accounting", "Legal", "Project Management", "Leadership", "Communication",
     "Analytics", "UI/UX", "Design", "Healthcare", "Operations"
-  ];
-  const foundSkills = SKILL_KEYWORDS.filter((s) => new RegExp(`\\b${s}\\b`, "i").test(text));
+  const foundSkills = SKILL_KEYWORDS.filter((s) => text.toLowerCase().includes(s.toLowerCase()));
   const skills = foundSkills.length > 0 ? foundSkills.slice(0, 3) : ["Executive Management", "Strategic Planning"];
 
   // 5. Years of Experience calculation
