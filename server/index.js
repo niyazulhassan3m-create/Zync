@@ -1070,10 +1070,21 @@ Intent rules:
 - If user mentions "task", "todo", "reminder", "follow up", "velai" → intent = "create_task"
 - Otherwise → intent = "general"`;
 
+    let targetLang = prefLang !== "Auto-Detect" ? prefLang : "English";
+    if (/[\u0B80-\u0BFF]/.test(userText)) targetLang = "Tamil";
+    else if (/\b(en|enna|pannu|panniyaachu|pantoom|irukku|vanga|pongan|koode|la|nu|aachu|paartheenga)\b/i.test(userText)) targetLang = "Tanglish";
+
+    let defaultAnswer = "Understood. I have processed your request for the Command Center.";
+    if (targetLang === "Tanglish") {
+      defaultAnswer = "Purinjadhu. Ungaloda question ah process panniyaachu, Command Center la note pantoom.";
+    } else if (targetLang === "Tamil") {
+      defaultAnswer = "புரிந்தது. உங்கள் கேள்வி செயலாக்கப்பட்டு கட்டுப்பாட்டு மையத்தில் பதிவு செய்யப்பட்டது.";
+    }
+
     let parsed = {
-      detected_language: "English",
+      detected_language: targetLang,
       intent: "general",
-      spoken_response: "Understood. I've noted your request.",
+      spoken_response: defaultAnswer,
       entity: null,
       meeting_time: null,
       meeting_date: null,
@@ -1240,7 +1251,7 @@ app.post("/api/zync/jarvis/tts", async (req, res) => {
   }
 
   const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
-  const voiceId = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM"; // Default: Rachel
+  const voiceId = process.env.ELEVENLABS_VOICE_ID || "EXAVITQu4vr4xnSDxMaL"; // Default: Bella (Free Tier supported)
 
   if (!elevenLabsKey) {
     // Graceful degradation — tell frontend to use browser SpeechSynthesis
