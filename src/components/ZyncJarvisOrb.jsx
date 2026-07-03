@@ -1,19 +1,21 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 
 // ─── JARVIS State Machine ────────────────────────────────────────────────────
-// idle → listening → thinking → speaking → idle
+// idle → listening → thinking → speaking → standby
 const STATES = {
   IDLE: "idle",
   LISTENING: "listening",
   THINKING: "thinking",
   SPEAKING: "speaking",
+  STANDBY: "standby",
 };
 
 const STATE_LABELS = {
-  idle: "Ready",
-  listening: "Listening…",
+  idle: "Wake Word Listening ('Zync')",
+  listening: "Listening (Continuous Mode)…",
   thinking: "Processing…",
   speaking: "Speaking…",
+  standby: "Standby Mode",
 };
 
 const STATE_COLORS = {
@@ -21,6 +23,7 @@ const STATE_COLORS = {
   listening: "from-cyan-400 via-blue-500 to-violet-600",
   thinking: "from-amber-400 via-orange-500 to-red-500",
   speaking: "from-emerald-400 via-teal-500 to-cyan-600",
+  standby: "from-slate-700 via-slate-800 to-slate-900",
 };
 
 const LANGUAGE_OPTIONS = [
@@ -37,31 +40,110 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
   const [lastIntent, setLastIntent] = useState(null);
   const [detectedLang, setDetectedLang] = useState("English");
   const [activeContext, setActiveContext] = useState(null);
+  const [sessionCountdown, setSessionCountdown] = useState(30);
+  const [isContinuousActive, setIsContinuousActive] = useState(false);
+  const [wakeWordDetected, setWakeWordDetected] = useState(false);
+
   const [preferredLang, setPreferredLang] = useState(() => {
     return localStorage.getItem("zyncLanguagePreference") || "Auto-Detect";
   });
   const [error, setError] = useState(null);
 
   const recognitionRef = useRef(null);
+  const wakeWordRecognitionRef = useRef(null);
   const audioRef = useRef(null);
   const synthRef = useRef(null);
+  const timerRef = useRef(null);
 
   const handleLanguageChange = (lang) => {
     setPreferredLang(lang);
     localStorage.setItem("zyncLanguagePreference", lang);
   };
 
+  // ─── 1. Background Wake-Word Engine ('Zync' Keyword Listener) ────────────
   useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    try {
+      const wakeRec = new SpeechRecognition();
+      wakeRec.continuous = true;
+      wakeRec.interimResults = true;
+      wakeRec.lang = "en-US";
+
+      wakeRec.onresult = (event) => {
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const text = event.results[i][0].transcript.toLowerCase();
+          if (/\b(zync|zinc|hey zync|hi zync|jink|jeenc)\b/i.test(text)) {
+            console.log("⚡ [Wake-Word Engine] 'Zync' Keyword Detected!");
+            setWakeWordDetected(true);
+            wakeRec.stop();
+            activateContinuousListening();
+            break;
+          }
+        }
+      };
+
+      wakeRec.onerror = () => {
+        setTimeout(() => wakeRec.start?.(), 2000);
+      };
+
+      wakeRec.onend = () => {
+        if (state === STATES.IDLE && !isContinuousActive) {
+          try { wakeRec.start(); } catch (e) {}
+        }
+      };
+
+      wakeWordRecognitionRef.current = wakeRec;
+      wakeRec.start();
+    } catch (e) {
+      console.warn("[Wake-Word Engine] Web Speech API wake listener fallback active.");
+    }
+
     return () => {
-      if (recognitionRef.current) recognitionRef.current.abort?.();
-      if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
-      if (synthRef.current) window.speechSynthesis?.cancel();
+      wakeWordRecognitionRef.current?.abort?.();
     };
+  }, [state, isContinuousActive]);
+
+  // ─── 2. 30-Second Continuous Session Timer ────────────────────────────────
+  const resetSessionTimer = useCallback(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    setSessionCountdown(30);
+
+    timerRef.current = setInterval(() => {
+      setSessionCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timerRef.current);
+          triggerStandbyMode();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
   }, []);
 
-  const startListening = useCallback(() => {
+  const triggerStandbyMode = () => {
+    setIsContinuousActive(false);
+    setState(STATES.STANDBY);
+    setWakeWordDetected(false);
+
+    let standbyMsg = "Zync going to standby, Sir.";
+    if (detectedLang === "Tanglish") standbyMsg = "Zync standby-la pochu, Sir.";
+    if (detectedLang === "Tamil") standbyMsg = "Zync தயார் நிலைக்குச் செல்கிறது, ஐயா.";
+
+    setSpokenResponse(standbyMsg);
+    speakResponse(standbyMsg);
+
+    setTimeout(() => {
+      setState(STATES.IDLE);
+    }, 4000);
+  };
+
+  // ─── 3. Activate Continuous Listening Loop ────────────────────────────────
+  const activateContinuousListening = useCallback(() => {
     setError(null);
-    setTranscript("");
+    setIsContinuousActive(true);
+    resetSessionTimer();
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -89,23 +171,26 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
               interimTranscript += event.results[i][0].transcript;
             }
           }
-          setTranscript(finalTranscript || interimTranscript);
+          const text = finalTranscript || interimTranscript;
+          // Strip wake word prefix if spoken inside mic stream
+          const cleanedText = text.replace(/^\b(zync|zinc|hey zync|hi zync)\b\s*/i, "");
+          setTranscript(cleanedText || text);
+
           if (finalTranscript) {
-            processCommand(finalTranscript);
+            resetSessionTimer();
+            processCommand(cleanedText || finalTranscript);
           }
         };
 
         recognition.onerror = (err) => {
-          console.warn("[Zync JARVIS] SpeechRecognition error:", err.error);
           if (err.error !== "aborted") {
             setState(STATES.IDLE);
-            setError("Microphone access issue. Try typing your command.");
           }
         };
 
         recognition.onend = () => {
-          if (state === STATES.LISTENING) {
-            setState(STATES.IDLE);
+          if (isContinuousActive && state !== STATES.THINKING && state !== STATES.SPEAKING) {
+            try { recognition.start(); } catch (e) {}
           }
         };
 
@@ -117,24 +202,19 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
     } else {
       manualInput();
     }
-  }, [preferredLang]);
+  }, [preferredLang, isContinuousActive, state, resetSessionTimer]);
 
   const manualInput = () => {
     const text = prompt(
-      "🤖 Zync-Intelligence (English / Tamil / Tanglish):",
+      "🤖 Zync-Intelligence (Wake Word: 'Zync' / Voice Command):",
       preferredLang === "Tanglish"
-        ? "Cancel the meeting with Board of Directors"
-        : "Zync, cancel meeting with Hassan"
+        ? "Reschedule it to 4 PM"
+        : "Zync, schedule meeting with Hassan"
     );
     if (text) {
       setTranscript(text);
+      resetSessionTimer();
       processCommand(text);
-    }
-  };
-
-  const stopListening = () => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
     }
   };
 
@@ -197,7 +277,11 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
         audioRef.current = audio;
 
         audio.onended = () => {
-          setState(STATES.IDLE);
+          if (isContinuousActive) {
+            setState(STATES.LISTENING);
+          } else {
+            setState(STATES.IDLE);
+          }
           URL.revokeObjectURL(audioUrl);
         };
         audio.onerror = () => {
@@ -213,7 +297,6 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
         return;
       }
     } catch (err) {
-      console.warn("[Zync JARVIS] TTS fallback:", err);
       browserSpeak(text);
     }
   };
@@ -223,21 +306,19 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.rate = 1.0;
       utterance.pitch = 0.95;
-      utterance.volume = 1.0;
 
       const voices = window.speechSynthesis.getVoices();
       let preferredVoice = null;
-      if (detectedLang === "Tamil") {
-        preferredVoice = voices.find((v) => v.lang.includes("ta"));
-      }
+      if (detectedLang === "Tamil") preferredVoice = voices.find((v) => v.lang.includes("ta"));
       if (!preferredVoice) {
-        preferredVoice = voices.find(
-          (v) => v.name.includes("Google") || v.name.includes("Microsoft") || v.name.includes("Samantha")
-        );
+        preferredVoice = voices.find((v) => v.name.includes("Google") || v.name.includes("Microsoft"));
       }
       if (preferredVoice) utterance.voice = preferredVoice;
 
-      utterance.onend = () => setState(STATES.IDLE);
+      utterance.onend = () => {
+        if (isContinuousActive) setState(STATES.LISTENING);
+        else setState(STATES.IDLE);
+      };
       utterance.onerror = () => setState(STATES.IDLE);
 
       synthRef.current = utterance;
@@ -248,10 +329,10 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
   };
 
   const handleOrbClick = () => {
-    if (state === STATES.IDLE) {
-      startListening();
+    if (state === STATES.IDLE || state === STATES.STANDBY) {
+      activateContinuousListening();
     } else if (state === STATES.LISTENING) {
-      stopListening();
+      triggerStandbyMode();
     } else if (state === STATES.SPEAKING) {
       if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
       if (window.speechSynthesis) window.speechSynthesis.cancel();
@@ -259,7 +340,7 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
     }
   };
 
-  const isActive = state !== STATES.IDLE;
+  const isActive = state !== STATES.IDLE && state !== STATES.STANDBY;
 
   return (
     <div className="rounded-2xl border border-violet-500/40 bg-gradient-to-r from-slate-950 via-[#0d1029] to-slate-950 p-6 shadow-2xl relative overflow-hidden">
@@ -267,12 +348,12 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
       <div className={`absolute inset-0 opacity-20 bg-gradient-to-br ${STATE_COLORS[state]} blur-3xl transition-all duration-1000 pointer-events-none`} />
 
       <div className="relative flex items-center gap-6">
-        {/* ── The Orb ────────────────────────────────────────────────────────── */}
+        {/* ── The Orb (Wake-Word & Continuous Intelligence) ──────────────────── */}
         <button
           onClick={handleOrbClick}
           disabled={state === STATES.THINKING}
           className="relative flex-shrink-0 group focus:outline-none"
-          title={state === STATES.IDLE ? "Click to activate Zync-Intelligence Assistant" : STATE_LABELS[state]}
+          title={state === STATES.IDLE ? "Say 'Zync' to activate continuous voice mode" : STATE_LABELS[state]}
         >
           {isActive && (
             <>
@@ -287,7 +368,7 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
               state === STATES.IDLE
                 ? "group-hover:scale-110 group-hover:shadow-violet-500/40"
                 : state === STATES.LISTENING
-                ? "scale-110 shadow-cyan-500/50"
+                ? "scale-110 shadow-cyan-500/50 ring-4 ring-cyan-400/40"
                 : state === STATES.THINKING
                 ? "scale-105 shadow-amber-500/50"
                 : "scale-110 shadow-emerald-500/50"
@@ -319,10 +400,11 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
             )}
 
             <span className="relative z-10 text-white text-2xl drop-shadow-lg">
-              {state === STATES.IDLE && "🤖"}
-              {state === STATES.LISTENING && "🎙️"}
-              {state === STATES.THINKING && "⚡"}
+              {state === STATES.IDLE && "🎙️"}
+              {state === STATES.LISTENING && "⚡"}
+              {state === STATES.THINKING && "⌛"}
               {state === STATES.SPEAKING && "🔊"}
+              {state === STATES.STANDBY && "💤"}
             </span>
           </div>
         </button>
@@ -332,7 +414,7 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
           <div className="flex items-center gap-3 flex-wrap">
             <h3 className="text-base font-black text-white tracking-tight flex items-center gap-2">
               Zync-Intelligence
-              <span className="text-xs font-bold text-violet-400">Multilingual AI</span>
+              <span className="text-xs font-bold text-violet-400">Wake-Word & Continuous Voice Engine</span>
             </h3>
 
             <span className={`rounded-full px-3 py-0.5 text-[10px] font-bold uppercase tracking-widest border transition-all duration-500 ${
@@ -342,10 +424,19 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
                 ? "bg-cyan-500/15 border-cyan-500/30 text-cyan-300 animate-pulse"
                 : state === STATES.THINKING
                 ? "bg-amber-500/15 border-amber-500/30 text-amber-300 animate-pulse"
-                : "bg-emerald-500/15 border-emerald-500/30 text-emerald-300 animate-pulse"
+                : state === STATES.SPEAKING
+                ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-300 animate-pulse"
+                : "bg-slate-700/30 border-slate-600 text-slate-400"
             }`}>
               {STATE_LABELS[state]}
             </span>
+
+            {/* Continuous 30s Countdown Timer */}
+            {isContinuousActive && (
+              <span className="rounded-full bg-cyan-500/20 border border-cyan-500/40 px-2.5 py-0.5 text-[10px] font-black text-cyan-300 animate-pulse">
+                ⏱️ Active Session: {sessionCountdown}s
+              </span>
+            )}
 
             {detectedLang && (
               <span className="rounded-full bg-gradient-to-r from-purple-500/20 to-pink-500/20 border border-purple-500/30 px-2.5 py-0.5 text-[10px] font-bold text-purple-300">
@@ -355,7 +446,7 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
           </div>
 
           <p className="text-xs text-slate-400">
-            Fluent in <b>English</b>, <b>Tamil</b>, & <b>Tanglish</b> · Command Refinement & Multi-Step Clarification Active
+            Say <b>"Zync"</b> to awaken · 30-Second Continuous Mode · Context-Aware ("it"/"that") · Executive Deference ("Done, Sir.")
           </p>
 
           {/* User Language Preference Selector Bar */}
@@ -390,7 +481,7 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
           {spokenResponse && state !== STATES.LISTENING && (
             <div className="rounded-lg border border-emerald-500/30 bg-emerald-950/20 px-3 py-2 mt-1">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Zync confirmed ({detectedLang}):</span>
+                <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Zync Executive Confirmation ({detectedLang}):</span>
                 <span className="text-[10px] text-emerald-400 font-mono">ElevenLabs Multilingual v2</span>
               </div>
               <p className="text-sm text-slate-200">"{spokenResponse}"</p>
@@ -459,22 +550,29 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
         {/* Action & Demos */}
         <div className="flex flex-col gap-1.5 flex-shrink-0">
           <button
-            onClick={manualInput}
-            disabled={state !== STATES.IDLE}
-            className="rounded-lg border border-slate-700 bg-slate-800/80 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-700 transition-colors disabled:opacity-40"
+            onClick={() => activateContinuousListening()}
+            className="rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-xs font-bold text-cyan-200 hover:bg-cyan-500/30 transition-colors shadow-lg animate-pulse"
           >
-            ⌨️ Type Command
+            ⚡ Trigger 'Zync' Wake
           </button>
           <button
             onClick={() => {
-              const demoRefine = "Zync, cancel the meeting with Board of Directors";
-              setTranscript(demoRefine);
-              processCommand(demoRefine);
+              const demoPronoun = "Reschedule it to 5 PM";
+              setTranscript(demoPronoun);
+              resetSessionTimer();
+              processCommand(demoPronoun);
             }}
-            disabled={state !== STATES.IDLE}
-            className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-bold text-red-300 hover:bg-red-500/20 transition-colors disabled:opacity-40"
+            disabled={state !== STATES.IDLE && state !== STATES.LISTENING}
+            className="rounded-lg border border-purple-500/30 bg-purple-500/10 px-3 py-1.5 text-xs font-bold text-purple-300 hover:bg-purple-500/20 transition-colors disabled:opacity-40"
           >
-            ⚠️ Clarification Demo
+            🗣️ 'it' Pronoun Demo
+          </button>
+          <button
+            onClick={manualInput}
+            disabled={state === STATES.THINKING}
+            className="rounded-lg border border-slate-700 bg-slate-800/80 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-700 transition-colors disabled:opacity-40"
+          >
+            ⌨️ Type Command
           </button>
         </div>
       </div>

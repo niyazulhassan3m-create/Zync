@@ -1024,8 +1024,13 @@ async function callZyncIntelligence(prompt) {
   return null;
 }
 
-// Active Conversation Context for Multi-step Negotiation & Context Retention
+// Active Conversation Context for Multi-step Negotiation & Pronoun Resolution ("it", "that")
 let activeConversationContext = null;
+let lastSessionSubject = {
+  entity: "Board of Directors",
+  title: "Meeting with Board of Directors",
+  type: "meeting"
+};
 
 // POST /api/zync/jarvis — Unified JARVIS intent + response endpoint
 app.post("/api/zync/jarvis", async (req, res) => {
@@ -1168,14 +1173,22 @@ app.post("/api/zync/jarvis", async (req, res) => {
     const isChangeOrCancel = /\b(cancel|delete|remove|change|reschedule|postpone)\b/i.test(lowerCmd);
 
     if (isChangeOrCancel) {
-      // Extract target entity (person or meeting subject)
+      // Pronoun resolution ("it", "that", "this", "adhu", "idhu")
       let targetEntity = "Contact";
-      const cleanedText = userText.replace(/\b(zync|please|the|meeting|task|event)\b/gi, "").trim();
-      const entMatch = cleanedText.match(/(?:with|for)\s+([A-Z][a-z0-9_-]+|[a-z0-9_-]+)/i) || cleanedText.match(/([A-Z][a-z0-9_-]+)/);
-      if (entMatch && !["with", "for", "meeting", "task", "a", "the", "my", "this", "cancel", "delete", "remove"].includes(entMatch[1].toLowerCase())) {
-        targetEntity = entMatch[1];
-      } else if (zyncScheduledEvents.length > 0) {
-        targetEntity = zyncScheduledEvents[0].title.replace("Meeting with ", "");
+      const containsPronoun = /\b(it|that|this|adhu|idhu|adhai|idhai)\b/i.test(lowerCmd);
+
+      if (containsPronoun && lastSessionSubject) {
+        targetEntity = lastSessionSubject.entity;
+      } else {
+        const cleanedText = userText.replace(/\b(zync|please|the|meeting|task|event|it|that|this)\b/gi, "").trim();
+        const entMatch = cleanedText.match(/(?:with|for)\s+([A-Z][a-z0-9_-]+|[a-z0-9_-]+)/i) || cleanedText.match(/([A-Z][a-z0-9_-]+)/);
+        if (entMatch && !["with", "for", "meeting", "task", "a", "the", "my", "this", "cancel", "delete", "remove", "it", "that"].includes(entMatch[1].toLowerCase())) {
+          targetEntity = entMatch[1];
+        } else if (lastSessionSubject) {
+          targetEntity = lastSessionSubject.entity;
+        } else if (zyncScheduledEvents.length > 0) {
+          targetEntity = zyncScheduledEvents[0].title.replace("Meeting with ", "");
+        }
       }
 
       // Save Context
@@ -1187,15 +1200,17 @@ app.post("/api/zync/jarvis", async (req, res) => {
         language: detectedLang,
       };
 
-      // Language Mirroring Response
-      let clarificationSpoken = `Certainly. Would you like to cancel, delete, or reschedule the meeting with ${targetEntity}?`;
+      lastSessionSubject = { entity: targetEntity, title: `Meeting with ${targetEntity}`, type: "meeting" };
+
+      // Language Mirroring Response + Executive Feedback Loop
+      let clarificationSpoken = `Certainly, Sir. Would you like to cancel, delete, or reschedule the meeting with ${targetEntity}?`;
       if (detectedLang === "Tanglish") {
-        clarificationSpoken = `Sure. ${targetEntity} koode meeting ah cancel panna poringala, delete panna poringala, illana reschedule panna poringala?`;
+        clarificationSpoken = `Sure Sir. ${targetEntity} koode meeting ah cancel panna poringala, delete panna poringala, illana reschedule panna poringala?`;
       } else if (detectedLang === "Tamil") {
-        clarificationSpoken = `நிச்சயமாக. ${targetEntity} உடனான சந்திப்பை ரத்து செய்ய விரும்புகிறீர்களா, நீக்க விரும்புகிறீர்களா அல்லது வேறு நேரத்திற்கு மாற்ற விரும்புகிறீர்களா?`;
+        clarificationSpoken = `நிச்சயமாக, ஐயா. ${targetEntity} உடனான சந்திப்பை ரத்து செய்ய விரும்புகிறீர்களா, நீக்க விரும்புகிறீர்களா அல்லது வேறு நேரத்திற்கு மாற்ற விரும்புகிறீர்களா?`;
       }
 
-      console.log(`🤖 [Clarification Protocol Triggered] Entity: ${targetEntity} | Lang: ${detectedLang}`);
+      console.log(`🤖 [Clarification Protocol Triggered] Resolved Entity: ${targetEntity} | Lang: ${detectedLang}`);
 
       return res.json({
         success: true,
@@ -1260,30 +1275,30 @@ Intent Rules:
       offlineIntent = "status";
     }
 
-    let defaultAnswer = "Understood. I have logged your request in the Command Center.";
+    let defaultAnswer = "Understood, Sir. I have logged your request in the Command Center.";
     if (detectedLang === "Tanglish") {
       if (offlineIntent === "schedule_meeting") {
         const entStr = extractedEntity || "contact";
         const timeStr = extractedTime || "scheduled time";
-        defaultAnswer = `Done. ${entStr} koode meeting ${timeStr}-ukku schedule panniyaachu.`;
+        defaultAnswer = `Done Sir. ${entStr} koode meeting ${timeStr}-ukku schedule panniyaachu.`;
       } else if (offlineIntent === "create_task") {
-        defaultAnswer = `Task create panniyaachu. Priority high la set pantoom.`;
+        defaultAnswer = `Done Sir. Task create panniyaachu. Priority high la set pantoom.`;
       } else {
-        defaultAnswer = "Purinjadhu. Ungaloda question ah process panniyaachu, Command Center la note pantoom.";
+        defaultAnswer = "Purinjadhu Sir. Ungaloda question ah process panniyaachu, Command Center la note pantoom.";
       }
     } else if (detectedLang === "Tamil") {
       if (offlineIntent === "schedule_meeting") {
         const entStr = extractedEntity || "சந்திப்பு";
         const timeStr = extractedTime || "குறிப்பிட்ட நேரம்";
-        defaultAnswer = `சரி, ${entStr} உடனான சந்திப்பு ${timeStr} மணிக்கு பதிவு செய்யப்பட்டது.`;
+        defaultAnswer = `மாற்றம் செய்யப்பட்டது, ஐயா. ${entStr} உடனான சந்திப்பு ${timeStr} மணிக்கு பதிவு செய்யப்பட்டது.`;
       } else {
-        defaultAnswer = "புரிந்தது. உங்கள் கேள்வி செயலாக்கப்பட்டு கட்டுப்பாட்டு மையத்தில் பதிவு செய்யப்பட்டது.";
+        defaultAnswer = "புரிந்தது, ஐயா. உங்கள் கேள்வி செயலாக்கப்பட்டு கட்டுப்பாட்டு மையத்தில் பதிவு செய்யப்பட்டது.";
       }
     } else {
       if (offlineIntent === "schedule_meeting") {
         const entStr = extractedEntity || "contact";
         const timeStr = extractedTime || "requested time";
-        defaultAnswer = `Done. Meeting with ${entStr} scheduled for ${timeStr}.`;
+        defaultAnswer = `Done, Sir. Meeting with ${entStr} scheduled for ${timeStr}.`;
       }
     }
 
