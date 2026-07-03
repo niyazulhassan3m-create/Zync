@@ -284,6 +284,7 @@ app.post("/api/parse-resume", upload.single("resume"), async (req, res) => {
 
     let geminiResult;
     let lastError;
+    let extracted;
     for (const model of MODEL_CASCADE) {
       try {
         geminiResult = await callGemini(model);
