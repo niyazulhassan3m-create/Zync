@@ -1203,6 +1203,18 @@ Intent Rules:
         created_at: new Date().toISOString(),
       };
 
+      const isoDatetime = parseToISODatetime(userText, meetingTime, meetingDate);
+      const scheduledEvt = {
+        id: `evt-${Date.now()}`,
+        title: `Meeting with ${entity}`,
+        type: "meeting",
+        start_datetime: isoDatetime,
+        reminder_status: "Pending",
+        actual_start_time: null,
+        created_at: new Date().toISOString(),
+      };
+      zyncScheduledEvents.unshift(scheduledEvt);
+
       if (!parsed.spoken_response || parsed.spoken_response.includes("process") || parsed.spoken_response.includes("Understood")) {
         if (parsed.detected_language === "Tanglish") {
           parsed.spoken_response = `Done. ${entity} koode meeting ${meetingDate} ${meetingTime}-ukku schedule panniyaachu.`;
@@ -1212,7 +1224,7 @@ Intent Rules:
           parsed.spoken_response = `Done. Meeting with ${entity} scheduled for ${meetingDate} at ${meetingTime}.`;
         }
       }
-      actionResult = { type: "meeting_scheduled", data: meeting };
+      actionResult = { type: "meeting_scheduled", data: meeting, scheduled_event: scheduledEvt };
 
     } else if (parsed.intent === "create_task") {
       const task = {
@@ -1226,6 +1238,18 @@ Intent Rules:
         created_at: new Date().toISOString(),
       };
 
+      const taskIsoDatetime = parseToISODatetime(userText, null, parsed.task_deadline);
+      const scheduledTaskEvt = {
+        id: `evt-task-${Date.now()}`,
+        title: task.title,
+        type: "task",
+        start_datetime: taskIsoDatetime,
+        reminder_status: "Pending",
+        actual_start_time: null,
+        created_at: new Date().toISOString(),
+      };
+      zyncScheduledEvents.unshift(scheduledTaskEvt);
+
       if (!parsed.spoken_response || parsed.spoken_response.includes("process") || parsed.spoken_response.includes("Understood")) {
         if (parsed.detected_language === "Tanglish") {
           parsed.spoken_response = `Task create panniyaachu: ${task.title}. Priority: ${task.priority}.`;
@@ -1235,7 +1259,7 @@ Intent Rules:
           parsed.spoken_response = `Task created: ${task.title}. Priority: ${task.priority}.`;
         }
       }
-      actionResult = { type: "task_created", data: task };
+      actionResult = { type: "task_created", data: task, scheduled_event: scheduledTaskEvt };
     }
 
     // Step 3: Log the command
@@ -1351,6 +1375,234 @@ app.post("/api/zync/jarvis/tts", async (req, res) => {
 // GET /api/zync/jarvis/command-log — fetch JARVIS command history
 app.get("/api/zync/jarvis/command-log", (_req, res) => {
   res.json({ logs: jarvisCommandLog });
+});
+
+// ─── Intelligent Scheduling Engine Stores ──────────────────────────────────
+const zyncScheduledEvents = [
+  {
+    id: "evt-sample-1",
+    title: "Executive Board Review with Acme Corp",
+    type: "meeting",
+    start_datetime: new Date(Date.now() + 10 * 60 * 1000).toISOString(), // Starts in 10 mins for immediate testing
+    reminder_status: "Pending",
+    actual_start_time: null,
+    created_at: new Date().toISOString(),
+  }
+];
+const zyncSchedulingAlerts = [];
+
+// Helper: Parse relative/explicit times to ISO 8601 string
+function parseToISODatetime(userText, extractedTime, extractedDate) {
+  const now = new Date();
+  const lower = userText.toLowerCase();
+
+  // Relative "in X minutes" / "in X mins"
+  const relMinMatch = lower.match(/in\s+(\d+)\s*(?:minutes|mins|min)/i);
+  if (relMinMatch) {
+    const mins = parseInt(relMinMatch[1], 10);
+    return new Date(now.getTime() + mins * 60 * 1000).toISOString();
+  }
+
+  // Parse target date
+  let targetDate = new Date();
+  if (lower.includes("tomorrow")) {
+    targetDate.setDate(targetDate.getDate() + 1);
+  } else if (extractedDate) {
+    const [y, m, d] = extractedDate.split("-").map(Number);
+    if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+      targetDate = new Date(y, m - 1, d);
+    }
+  }
+
+  // Extract hours & minutes
+  let hour = 14; // Default 2 PM
+  let min = 0;
+  const timeStr = extractedTime || userText;
+  const match = timeStr.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+
+  if (match) {
+    hour = parseInt(match[1], 10);
+    min = match[2] ? parseInt(match[2], 10) : 0;
+    const ampm = match[3] ? match[3].toLowerCase() : null;
+    if (ampm === "pm" && hour < 12) hour += 12;
+    if (ampm === "am" && hour === 12) hour = 0;
+  }
+
+  targetDate.setHours(hour, min, 0, 0);
+  return targetDate.toISOString();
+}
+
+// ─── Proactive Reminder Engine (Watchdog) ──────────────────────────────────
+function runSchedulingWatchdog() {
+  const now = new Date();
+  console.log(`\n⏰ [Scheduling Watchdog] Checking events at ${now.toLocaleTimeString()}...`);
+
+  zyncScheduledEvents.forEach((evt) => {
+    if (!evt.start_datetime) return;
+    const eventTime = new Date(evt.start_datetime);
+    const diffMins = Math.round((eventTime - now) / (1000 * 60));
+
+    // Meetings: 30-minute Preparation Alert (window: 20-35 mins)
+    if (evt.type === "meeting" && diffMins >= 20 && diffMins <= 35 && evt.reminder_status === "Pending") {
+      evt.reminder_status = "30min_sent";
+      const alert = {
+        id: `alert-30m-${Date.now()}`,
+        event_id: evt.id,
+        alert_type: "preparation_alert",
+        title: evt.title,
+        minutes_remaining: diffMins,
+        message: `Sir, you have "${evt.title}" in 30 minutes. Should I pull up the latest report?`,
+        suggested_action: "Pull Latest Report",
+        triggered_at: now.toISOString(),
+        delivered_via: zyncWorkspaces[0].service_provider_activation_status ? "WhatsApp/Telegram (Admin Active)" : "Zync Dashboard High-Priority Banner",
+      };
+
+      zyncSchedulingAlerts.unshift(alert);
+
+      if (zyncWorkspaces[0].service_provider_activation_status) {
+        localNotificationLogs.unshift({
+          id: `log-30m-${Date.now()}`,
+          workspace_id: zyncWorkspaces[0].workspace_id,
+          recipient: "Executive MD",
+          message: alert.message,
+          status: "SENT",
+          sent_at: now.toISOString(),
+        });
+      }
+
+      console.log(`  🚨 30-Min Preparation Alert triggered for: "${evt.title}"`);
+    }
+
+    // Meetings: 10-minute Departure Alert (window: -5 to 15 mins)
+    if (
+      evt.type === "meeting" &&
+      diffMins >= -5 &&
+      diffMins <= 15 &&
+      (evt.reminder_status === "Pending" || evt.reminder_status === "30min_sent")
+    ) {
+      evt.reminder_status = "10min_sent";
+      const alert = {
+        id: `alert-10m-${Date.now()}`,
+        event_id: evt.id,
+        alert_type: "departure_alert",
+        title: evt.title,
+        minutes_remaining: Math.max(0, diffMins),
+        message: `Sir, 10 minutes to "${evt.title}". Ready to connect?`,
+        suggested_action: "Join/Start",
+        triggered_at: now.toISOString(),
+        delivered_via: zyncWorkspaces[0].service_provider_activation_status ? "WhatsApp/Telegram (Admin Active)" : "Zync Dashboard High-Priority Banner",
+      };
+
+      zyncSchedulingAlerts.unshift(alert);
+
+      if (zyncWorkspaces[0].service_provider_activation_status) {
+        localNotificationLogs.unshift({
+          id: `log-10m-${Date.now()}`,
+          workspace_id: zyncWorkspaces[0].workspace_id,
+          recipient: "Executive MD",
+          message: alert.message,
+          status: "SENT",
+          sent_at: now.toISOString(),
+        });
+      }
+
+      console.log(`  🚀 10-Min Departure Alert triggered for: "${evt.title}"`);
+    }
+
+    // Tasks: Exact deadline reminder (window: <= 5 mins or overdue)
+    if (evt.type === "task" && diffMins <= 5 && evt.reminder_status === "Pending") {
+      evt.reminder_status = "deadline_sent";
+      const alert = {
+        id: `alert-task-${Date.now()}`,
+        event_id: evt.id,
+        alert_type: "task_deadline",
+        title: evt.title,
+        minutes_remaining: 0,
+        message: `Sir, deadline reached for task: "${evt.title}".`,
+        suggested_action: "Mark Done",
+        triggered_at: now.toISOString(),
+        delivered_via: zyncWorkspaces[0].service_provider_activation_status ? "WhatsApp/Telegram (Admin Active)" : "Zync Dashboard High-Priority Banner",
+      };
+
+      zyncSchedulingAlerts.unshift(alert);
+      console.log(`  📌 Task Deadline Alert triggered for: "${evt.title}"`);
+    }
+  });
+
+  if (zyncSchedulingAlerts.length > 20) zyncSchedulingAlerts.length = 20;
+}
+
+// Run Watchdog every 5 minutes
+const WATCHDOG_INTERVAL_MS = 5 * 60 * 1000;
+setInterval(runSchedulingWatchdog, WATCHDOG_INTERVAL_MS);
+
+// ─── Scheduling API Endpoints ───────────────────────────────────────────────
+
+// GET /api/zync/scheduling-alerts — Fetch active alerts for dashboard
+app.get("/api/zync/scheduling-alerts", (_req, res) => {
+  res.json({ alerts: zyncSchedulingAlerts, events: zyncScheduledEvents });
+});
+
+// POST /api/zync/confirm-meeting-start — Join/Start button confirmation loop
+app.post("/api/zync/confirm-meeting-start", (req, res) => {
+  const { event_id } = req.body;
+  const evt = zyncScheduledEvents.find((e) => e.id === event_id);
+
+  const startTime = new Date().toISOString();
+
+  if (evt) {
+    evt.actual_start_time = startTime;
+    evt.reminder_status = "completed";
+  }
+
+  // Dismiss alert from active alerts
+  const alertIndex = zyncSchedulingAlerts.findIndex((a) => a.event_id === event_id);
+  if (alertIndex !== -1) {
+    zyncSchedulingAlerts.splice(alertIndex, 1);
+  }
+
+  const logEntry = {
+    id: `jarvis-confirm-${Date.now()}`,
+    timestamp: startTime,
+    user_command: "Clicked Join/Start button",
+    zync_response: `Meeting started at ${new Date(startTime).toLocaleTimeString()}. Actual start time logged.`,
+    intent: "meeting_started",
+    action_taken: "meeting_started",
+    entity: evt?.title || "Executive Meeting",
+  };
+  jarvisCommandLog.unshift(logEntry);
+
+  console.log(`⚡ [Meeting Started] ${evt?.title || event_id} logged start time: ${startTime}`);
+  res.json({ success: true, actual_start_time: startTime, log: logEntry });
+});
+
+// POST /api/zync/reschedule-meeting — Reschedule meeting button loop
+app.post("/api/zync/reschedule-meeting", (req, res) => {
+  const { event_id, new_datetime } = req.body;
+  const evt = zyncScheduledEvents.find((e) => e.id === event_id);
+
+  const updatedISO = new_datetime ? new Date(new_datetime).toISOString() : new Date(Date.now() + 3600000).toISOString();
+
+  if (evt) {
+    evt.start_datetime = updatedISO;
+    evt.reminder_status = "Pending";
+    evt.actual_start_time = null;
+  }
+
+  // Dismiss old alert
+  const alertIndex = zyncSchedulingAlerts.findIndex((a) => a.event_id === event_id);
+  if (alertIndex !== -1) {
+    zyncSchedulingAlerts.splice(alertIndex, 1);
+  }
+
+  console.log(`📅 [Meeting Rescheduled] ${evt?.title} rescheduled to ${updatedISO}`);
+  res.json({ success: true, new_datetime: updatedISO, event: evt });
+});
+
+// POST /api/zync/run-watchdog — Manual trigger for Watchdog check
+app.post("/api/zync/run-watchdog", (_req, res) => {
+  runSchedulingWatchdog();
+  res.json({ success: true, alerts: zyncSchedulingAlerts, count: zyncSchedulingAlerts.length });
 });
 
 // ─── Background Automation Engine (Cron Runner) ────────────────────────────

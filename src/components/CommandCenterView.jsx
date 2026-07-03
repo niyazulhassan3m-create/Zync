@@ -7,6 +7,7 @@ import TaskQueueBoard from "./TaskQueueBoard";
 import GoogleCalendarModule from "./GoogleCalendarModule";
 import ZyncJarvisOrb from "./ZyncJarvisOrb";
 import ZyncCommandLog from "./ZyncCommandLog";
+import IntelligentSchedulingBanner from "./IntelligentSchedulingBanner";
 
 import { useTasks } from "../store/useTasks";
 import { useCalendarEvents } from "../store/useCalendarEvents";
@@ -74,6 +75,9 @@ export default function CommandCenterView() {
         onMeetingCreated={handleJarvisMeetingCreated}
         onCommandLogged={handleJarvisCommandLogged}
       />
+
+      {/* ── Intelligent Scheduling Engine: Proactive Alerts & Confirmation Loop ── */}
+      <IntelligentSchedulingBanner />
 
       {/* ── Executive Progress Visualizer: Performance Ring ───────────────── */}
       <PerformanceRing
