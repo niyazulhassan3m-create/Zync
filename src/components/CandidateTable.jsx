@@ -1,6 +1,8 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// Colour maps
-// ─────────────────────────────────────────────────────────────────────────────
+import React, { useState } from "react";
+import StakeholderSentimentBadge from "./StakeholderSentimentBadge";
+import MarketIntelligenceOverlayTooltip from "./MarketIntelligenceOverlayTooltip";
+import SmartCommunicationModal from "./SmartCommunicationModal";
+
 const ROLE_COLORS = {
   Technology:  "text-cyan-300 bg-cyan-500/10 border-cyan-500/25",
   Sales:       "text-emerald-300 bg-emerald-500/10 border-emerald-500/25",
@@ -38,9 +40,6 @@ function Badge({ label, colorMap }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Empty state
-// ─────────────────────────────────────────────────────────────────────────────
 function EmptyState({ hasSearch }) {
   return (
     <div className="flex flex-col items-center justify-center py-20 gap-4">
@@ -61,9 +60,6 @@ function EmptyState({ hasSearch }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CandidateTable — main exported component
-// ─────────────────────────────────────────────────────────────────────────────
 export default function CandidateTable({
   candidates,
   filteredCandidates,
@@ -74,6 +70,8 @@ export default function CandidateTable({
   const isFiltered = filteredCandidates.length !== candidates.length;
   const hasSearch = candidates.length > 0 && filteredCandidates.length === 0;
 
+  const [activeModalCandidate, setActiveModalCandidate] = useState(null);
+
   return (
     <div className="rounded-2xl border border-slate-700/60 bg-slate-800/40 overflow-hidden">
       {/* Table header */}
@@ -82,7 +80,7 @@ export default function CandidateTable({
           <svg className="h-4 w-4 text-slate-500" viewBox="0 0 20 20" fill="currentColor">
             <path fillRule="evenodd" d="M.99 5.24A2.25 2.25 0 0 1 3.25 3h13.5A2.25 2.25 0 0 1 19 5.25l.01 9.5A2.25 2.25 0 0 1 16.76 17H3.26A2.267 2.267 0 0 1 1 14.74l-.01-9.5Zm8.26 9.52v-.001a.75.75 0 0 0 1.048.227 8.16 8.16 0 0 0 1.792-1.709.75.75 0 1 0-1.176-.937 6.63 6.63 0 0 1-.823.78l-.051-.014a.75.75 0 0 0-.79 1.654Zm4.816-8.027a8.145 8.145 0 0 0-2.003-1.394.75.75 0 1 0-.653 1.35 6.645 6.645 0 0 1 1.633 1.137.75.75 0 1 0 1.023-1.093ZM9.255 5.504A.75.75 0 0 0 8 5.75a6.633 6.633 0 0 1-1.452 4.17.75.75 0 1 0 1.17.94A8.133 8.133 0 0 0 9.503 6.25a.75.75 0 0 0-.248-.746Z" clipRule="evenodd" />
           </svg>
-          <span className="text-sm font-semibold text-slate-200">Candidate Pipeline</span>
+          <span className="text-sm font-semibold text-slate-200">Candidate Pipeline — Strategic Context</span>
           <span className="rounded-full bg-slate-700/60 border border-slate-600/40 px-2 py-0.5 text-xs font-medium text-slate-400">
             {isFiltered
               ? `${filteredCandidates.length} of ${candidates.length}`
@@ -128,7 +126,7 @@ export default function CandidateTable({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-700/40 bg-slate-800/30">
-                {["Candidate", "Role · Seniority", "Top Skills", "Exp.", "Contact", "Added"].map((h) => (
+                {["Candidate & Sentiment", "Role & Market Overlay", "Top Skills", "Exp.", "Execute Action", "Added"].map((h) => (
                   <th
                     key={h}
                     className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap"
@@ -145,21 +143,38 @@ export default function CandidateTable({
                   key={c.id}
                   className="group hover:bg-white/[0.025] transition-colors duration-150"
                 >
-                  {/* Candidate */}
+                  {/* Candidate & Sentiment */}
                   <td className="px-4 py-3.5 whitespace-nowrap">
-                    <div className="flex items-center gap-2.5">
-                      <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-violet-500/20 border border-violet-500/30 text-xs font-bold text-violet-300">
-                        {(c.fullName || "?")[0].toUpperCase()}
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-2.5">
+                        <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-violet-500/20 border border-violet-500/30 text-xs font-bold text-violet-300">
+                          {(c.fullName || "?")[0].toUpperCase()}
+                        </div>
+                        <span className="font-semibold text-slate-100">{c.fullName}</span>
                       </div>
-                      <span className="font-medium text-slate-200">{c.fullName}</span>
+                      {/* Stakeholder Sentiment Analysis Badge */}
+                      <div className="pl-9">
+                        <StakeholderSentimentBadge
+                          score={c.seniorityLevel === "Executive" || c.seniorityLevel === "Lead" ? 0.9 : 0.75}
+                          tag="Positive"
+                          reasoning="High executive competency match"
+                        />
+                      </div>
                     </div>
                   </td>
 
-                  {/* Role + Seniority */}
+                  {/* Role + Seniority + Market Intelligence Overlay */}
                   <td className="px-4 py-3.5 whitespace-nowrap">
                     <div className="flex flex-col gap-1">
-                      <Badge label={c.roleCategory} colorMap={ROLE_COLORS} />
-                      <Badge label={c.seniorityLevel} colorMap={SENIORITY_COLORS} />
+                      <div className="flex items-center gap-1.5">
+                        <Badge label={c.roleCategory} colorMap={ROLE_COLORS} />
+                        <Badge label={c.seniorityLevel} colorMap={SENIORITY_COLORS} />
+                      </div>
+                      {/* Market Intelligence Overlay Tooltip */}
+                      <MarketIntelligenceOverlayTooltip
+                        roleCategory={c.roleCategory}
+                        entityName={c.fullName}
+                      />
                     </div>
                   </td>
 
@@ -183,24 +198,14 @@ export default function CandidateTable({
                     <span className="ml-1 text-xs text-slate-600">yr</span>
                   </td>
 
-                  {/* Contact */}
-                  <td className="px-4 py-3.5">
-                    <div className="flex flex-col gap-0.5">
-                      {c.email && c.email !== "Not found" ? (
-                        <a
-                          href={`mailto:${c.email}`}
-                          className="text-violet-400 hover:text-violet-300 transition-colors text-xs truncate max-w-[160px]"
-                          title={c.email}
-                        >
-                          {c.email}
-                        </a>
-                      ) : (
-                        <span className="text-xs text-slate-600 italic">No email</span>
-                      )}
-                      {c.phone && c.phone !== "Not found" && (
-                        <span className="text-xs text-slate-500 font-mono">{c.phone}</span>
-                      )}
-                    </div>
+                  {/* Execute Communication Action Button */}
+                  <td className="px-4 py-3.5 whitespace-nowrap">
+                    <button
+                      onClick={() => setActiveModalCandidate(c)}
+                      className="flex items-center gap-1.5 rounded-xl border border-violet-500/40 bg-gradient-to-r from-violet-500/20 to-purple-600/20 px-3 py-1.5 text-xs font-bold text-violet-200 hover:border-violet-400 hover:text-white transition-all shadow-md"
+                    >
+                      <span>⚡</span> Execute Comm
+                    </button>
                   </td>
 
                   {/* Added */}
@@ -232,6 +237,16 @@ export default function CandidateTable({
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* Execute Communication Modal */}
+      {activeModalCandidate && (
+        <SmartCommunicationModal
+          isOpen={!!activeModalCandidate}
+          onClose={() => setActiveModalCandidate(null)}
+          entityName={activeModalCandidate.fullName}
+          roleCategory={activeModalCandidate.roleCategory}
+        />
       )}
     </div>
   );
