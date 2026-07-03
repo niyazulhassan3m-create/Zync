@@ -1037,17 +1037,22 @@ app.post("/api/zync/jarvis", async (req, res) => {
   console.log(`\n🤖 [Zync-Intelligence] User said: "${userText}" (Preferred Lang: ${prefLang})`);
 
   try {
-    // Step 1: Intent classification & Language Detection via Gemini
-    const intentPrompt = `${ZYNC_PERSONALITY_PROMPT}
+    // Step 1: Language Detection & Intent Classification via Gemini
+    let detectedLang = prefLang !== "Auto-Detect" ? prefLang : "English";
+    if (/[\u0B80-\u0BFF]/.test(userText)) {
+      detectedLang = "Tamil";
+    } else if (/\b(en|enna|pannu|panna|panniyaachu|pantoom|irukku|vanga|pongan|koode|la|nu|aachu|paartheenga|solli|solloonga|sollirukkeenga|panlaam|teriyum|mudinjudhu)\b/i.test(userText)) {
+      detectedLang = "Tanglish";
+    }
 
-Analyze this voice command from an executive: "${userText}"
-User Preferred Language Setting: "${prefLang}"
+    const intentPrompt = `You are Zync-Intelligence, the elite Executive Assistant for MDs and Chairmen.
+Target Language: "${detectedLang}" (User Input: "${userText}")
 
-Classify intent, detect input language, and generate the response in the same language. Output ONLY valid JSON:
+Analyze the user's command/question and output ONLY valid JSON matching this structure:
 {
-  "detected_language": "English" | "Tamil" | "Tanglish",
+  "detected_language": "${detectedLang}",
   "intent": "status" | "schedule_meeting" | "create_task" | "general",
-  "spoken_response": "Brief spoken response (1-2 sentences max) in the detected language adhering strictly to tone rules.",
+  "spoken_response": "Concise, direct executive response in ${detectedLang} answering the user or confirming action.",
   "entity": "person or company name if mentioned, otherwise null",
   "meeting_time": "extracted time if scheduling, otherwise null",
   "meeting_date": "YYYY-MM-DD if scheduling, otherwise null",
@@ -1056,38 +1061,78 @@ Classify intent, detect input language, and generate the response in the same la
   "task_deadline": "YYYY-MM-DD if mentioned, otherwise null"
 }
 
-Language & Tone Rules:
-1. Detect whether userText is in English, Tamil, or Tanglish (Tamil written in English script or mixed with English terms).
-2. If Preferred Language is set to 'English', 'Tamil', or 'Tanglish' (and not 'Auto-Detect'), generate response in that target language.
-3. Tone Requirements:
-   - English: Professional, crisp, authoritative executive tone.
-   - Tamil: Respectful, formal, yet highly efficient (Standard Business Tamil).
-   - Tanglish: Natural, professional yet conversational executive style (e.g. "Meeting with Hassan schedule panniyaachu, tomorrow 10:00 AM-ukku.").
+Language Response Rules (MUST FOLLOW STRICTLY):
+- If Target Language is "Tanglish": Respond in natural executive Tanglish (Tamil + English blend used by tech leaders in Chennai/Tamil Nadu). Example: "Hassan koode meeting 10:00 AM-ukku schedule panniyaachu. Calendar update dhaan."
+- If Target Language is "Tamil": Respond in formal, respectful, high-efficiency business Tamil. Example: "சந்திப்பு காலை 10:00 மணிக்கு பதிவு செய்யப்பட்டது."
+- If Target Language is "English": Respond in crisp, authoritative executive English.
 
-Intent rules:
-- If user asks about "status", "what's my status", "briefing", "morning pulse", "update", "nelavaram" → intent = "status"
-- If user mentions "schedule", "meeting", "call", "sync", "sandhippu" with a person → intent = "schedule_meeting"
-- If user mentions "task", "todo", "reminder", "follow up", "velai" → intent = "create_task"
-- Otherwise → intent = "general"`;
+Intent Rules:
+- "status": User asks about updates, status, briefing, pulse, nelavaram.
+- "schedule_meeting": User wants to schedule/arrange a meeting or sync with someone.
+- "create_task": User wants to add a task, todo, reminder, or follow up.
+- "general": User asks a question, requests information, or gives general instructions. Answer directly!`;
 
-    let targetLang = prefLang !== "Auto-Detect" ? prefLang : "English";
-    if (/[\u0B80-\u0BFF]/.test(userText)) targetLang = "Tamil";
-    else if (/\b(en|enna|pannu|panniyaachu|pantoom|irukku|vanga|pongan|koode|la|nu|aachu|paartheenga)\b/i.test(userText)) targetLang = "Tanglish";
+    // Offline Regex Intent & Entity Extractor (Guarantees zero-downtime parsing during AI rate limits)
+    let offlineIntent = "general";
+    let extractedEntity = null;
+    let extractedTime = null;
+    let extractedDate = new Date(Date.now() + 86400000).toISOString().split("T")[0];
 
-    let defaultAnswer = "Understood. I have processed your request for the Command Center.";
-    if (targetLang === "Tanglish") {
-      defaultAnswer = "Purinjadhu. Ungaloda question ah process panniyaachu, Command Center la note pantoom.";
-    } else if (targetLang === "Tamil") {
-      defaultAnswer = "புரிந்தது. உங்கள் கேள்வி செயலாக்கப்பட்டு கட்டுப்பாட்டு மையத்தில் பதிவு செய்யப்பட்டது.";
+    const lowerCmd = userText.toLowerCase();
+
+    // Meeting intent check
+    if (/\b(meeting|arrange|schedule|sync|call|sandhippu|meet)\b/i.test(lowerCmd)) {
+      offlineIntent = "schedule_meeting";
+      const entityMatch = userText.match(/(?:with|for|sandhippu)\s+([A-Z][a-z]+|[a-z]+)/i);
+      if (entityMatch && !["a", "the", "me", "my"].includes(entityMatch[1].toLowerCase())) {
+        extractedEntity = entityMatch[1];
+      }
+      const timeMatch = userText.match(/\b(\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|am|pm|o'clock))\b/i);
+      if (timeMatch) {
+        extractedTime = timeMatch[1].toUpperCase();
+      }
+    } else if (/\b(task|todo|reminder|follow up|velai|note)\b/i.test(lowerCmd)) {
+      offlineIntent = "create_task";
+      const entityMatch = userText.match(/(?:with|for|about)\s+([A-Z][a-z]+|[a-z]+)/i);
+      if (entityMatch) extractedEntity = entityMatch[1];
+    } else if (/\b(status|update|briefing|nelavaram|pulse)\b/i.test(lowerCmd)) {
+      offlineIntent = "status";
+    }
+
+    let defaultAnswer = "Understood. I have logged your request in the Command Center.";
+    if (detectedLang === "Tanglish") {
+      if (offlineIntent === "schedule_meeting") {
+        const entStr = extractedEntity || "contact";
+        const timeStr = extractedTime || "scheduled time";
+        defaultAnswer = `Done. ${entStr} koode meeting ${timeStr}-ukku schedule panniyaachu.`;
+      } else if (offlineIntent === "create_task") {
+        defaultAnswer = `Task create panniyaachu. Priority high la set pantoom.`;
+      } else {
+        defaultAnswer = "Purinjadhu. Ungaloda question ah process panniyaachu, Command Center la note pantoom.";
+      }
+    } else if (detectedLang === "Tamil") {
+      if (offlineIntent === "schedule_meeting") {
+        const entStr = extractedEntity || "சந்திப்பு";
+        const timeStr = extractedTime || "குறிப்பிட்ட நேரம்";
+        defaultAnswer = `சரி, ${entStr} உடனான சந்திப்பு ${timeStr} மணிக்கு பதிவு செய்யப்பட்டது.`;
+      } else {
+        defaultAnswer = "புரிந்தது. உங்கள் கேள்வி செயலாக்கப்பட்டு கட்டுப்பாட்டு மையத்தில் பதிவு செய்யப்பட்டது.";
+      }
+    } else {
+      if (offlineIntent === "schedule_meeting") {
+        const entStr = extractedEntity || "contact";
+        const timeStr = extractedTime || "requested time";
+        defaultAnswer = `Done. Meeting with ${entStr} scheduled for ${timeStr}.`;
+      }
     }
 
     let parsed = {
-      detected_language: targetLang,
-      intent: "general",
+      detected_language: detectedLang,
+      intent: offlineIntent,
       spoken_response: defaultAnswer,
-      entity: null,
-      meeting_time: null,
-      meeting_date: null,
+      entity: extractedEntity,
+      meeting_time: extractedTime,
+      meeting_date: extractedDate,
       task_title: null,
       task_priority: "medium",
       task_deadline: null,
@@ -1097,10 +1142,11 @@ Intent rules:
     if (aiResult) {
       const cleaned = aiResult.replace(/```json/g, "").replace(/```/g, "").trim();
       try {
-        parsed = { ...parsed, ...JSON.parse(cleaned) };
+        const jsonResult = JSON.parse(cleaned);
+        parsed = { ...parsed, ...jsonResult };
       } catch (e) {
         console.warn("[Zync-Intelligence] JSON parse fallback, using raw text as spoken response.");
-        parsed.spoken_response = cleaned.slice(0, 200);
+        parsed.spoken_response = cleaned.slice(0, 250);
       }
     }
 
@@ -1110,8 +1156,7 @@ Intent rules:
     if (parsed.intent === "status") {
       let pulseData = null;
       try {
-        const pulsePrompt = `${ZYNC_PERSONALITY_PROMPT}
-Act as a Chief of Staff. Generate a concise 3-bullet status update for an MD in ${parsed.detected_language}. Output JSON:
+        const pulsePrompt = `Act as Chief of Staff for an MD. Generate a 3-bullet status update in ${parsed.detected_language}. Output JSON:
 { "bullets": ["bullet 1", "bullet 2", "bullet 3"], "focus_theme": "theme" }`;
         const pulseResult = await callZyncIntelligence(pulsePrompt);
         if (pulseResult) {
@@ -1131,19 +1176,21 @@ Act as a Chief of Staff. Generate a concise 3-bullet status update for an MD in 
         };
       }
 
-      if (parsed.detected_language === "Tanglish") {
-        parsed.spoken_response = `Ungaloda status update: ${pulseData.bullets.join(" ")} Focus theme: ${pulseData.focus_theme}.`;
-      } else if (parsed.detected_language === "Tamil") {
-        parsed.spoken_response = `உங்கள் தற்போதைய நிலை: ${pulseData.bullets.join(" ")} முதன்மை இலக்கு: ${pulseData.focus_theme}.`;
-      } else {
-        parsed.spoken_response = `Here's your status. ${pulseData.bullets.join(" ")} Focus theme: ${pulseData.focus_theme}.`;
+      if (!parsed.spoken_response || parsed.spoken_response.includes("process") || parsed.spoken_response.includes("Understood")) {
+        if (parsed.detected_language === "Tanglish") {
+          parsed.spoken_response = `Ungaloda status update: ${pulseData.bullets.join(" ")} Focus theme: ${pulseData.focus_theme}.`;
+        } else if (parsed.detected_language === "Tamil") {
+          parsed.spoken_response = `உங்கள் தற்போதைய நிலை: ${pulseData.bullets.join(" ")} முதன்மை இலக்கு: ${pulseData.focus_theme}.`;
+        } else {
+          parsed.spoken_response = `Here's your status update. ${pulseData.bullets.join(" ")} Focus theme: ${pulseData.focus_theme}.`;
+        }
       }
       actionResult = { type: "status_briefing", data: pulseData };
 
     } else if (parsed.intent === "schedule_meeting") {
       const meetingDate = parsed.meeting_date || new Date(Date.now() + 86400000).toISOString().split("T")[0];
       const meetingTime = parsed.meeting_time || "10:00 AM";
-      const entity = parsed.entity || "Unspecified Contact";
+      const entity = parsed.entity || "Contact";
 
       const meeting = {
         id: `meeting-${Date.now()}`,
@@ -1156,7 +1203,7 @@ Act as a Chief of Staff. Generate a concise 3-bullet status update for an MD in 
         created_at: new Date().toISOString(),
       };
 
-      if (!parsed.spoken_response || parsed.spoken_response === "Understood. I've noted your request.") {
+      if (!parsed.spoken_response || parsed.spoken_response.includes("process") || parsed.spoken_response.includes("Understood")) {
         if (parsed.detected_language === "Tanglish") {
           parsed.spoken_response = `Done. ${entity} koode meeting ${meetingDate} ${meetingTime}-ukku schedule panniyaachu.`;
         } else if (parsed.detected_language === "Tamil") {
@@ -1179,7 +1226,7 @@ Act as a Chief of Staff. Generate a concise 3-bullet status update for an MD in 
         created_at: new Date().toISOString(),
       };
 
-      if (!parsed.spoken_response || parsed.spoken_response === "Understood. I've noted your request.") {
+      if (!parsed.spoken_response || parsed.spoken_response.includes("process") || parsed.spoken_response.includes("Understood")) {
         if (parsed.detected_language === "Tanglish") {
           parsed.spoken_response = `Task create panniyaachu: ${task.title}. Priority: ${task.priority}.`;
         } else if (parsed.detected_language === "Tamil") {
