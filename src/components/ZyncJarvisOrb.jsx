@@ -36,6 +36,7 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
   const [spokenResponse, setSpokenResponse] = useState("");
   const [lastIntent, setLastIntent] = useState(null);
   const [detectedLang, setDetectedLang] = useState("English");
+  const [activeContext, setActiveContext] = useState(null);
   const [preferredLang, setPreferredLang] = useState(() => {
     return localStorage.getItem("zyncLanguagePreference") || "Auto-Detect";
   });
@@ -45,13 +46,11 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
   const audioRef = useRef(null);
   const synthRef = useRef(null);
 
-  // Sync preferred language changes to localStorage
   const handleLanguageChange = (lang) => {
     setPreferredLang(lang);
     localStorage.setItem("zyncLanguagePreference", lang);
   };
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (recognitionRef.current) recognitionRef.current.abort?.();
@@ -60,12 +59,9 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
     };
   }, []);
 
-  // ─── Step 1: Start Listening Immediately ──────────────────────────────────
   const startListening = useCallback(() => {
     setError(null);
     setTranscript("");
-    setSpokenResponse("");
-    setLastIntent(null);
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -75,7 +71,6 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
         recognition.continuous = false;
         recognition.interimResults = true;
 
-        // Adapt recognition language based on user preference
         if (preferredLang === "Tamil") {
           recognition.lang = "ta-IN";
         } else {
@@ -128,10 +123,8 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
     const text = prompt(
       "🤖 Zync-Intelligence (English / Tamil / Tanglish):",
       preferredLang === "Tanglish"
-        ? "Zync, Hassan koode 10 AM-ukku meeting schedule pannunga"
-        : preferredLang === "Tamil"
-        ? "ஜிங்க், என் தற்போதைய நிலை என்ன?"
-        : "Zync, what's my status?"
+        ? "Cancel the meeting with Board of Directors"
+        : "Zync, cancel meeting with Hassan"
     );
     if (text) {
       setTranscript(text);
@@ -145,8 +138,7 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
     }
   };
 
-  // ─── Step 2: Process Command (Thinking State) ─────────────────────────────
-  const processCommand = async (text) => {
+  const processCommand = async (text, choiceOverride = null) => {
     setState(STATES.THINKING);
 
     try {
@@ -156,6 +148,7 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
         body: JSON.stringify({
           transcript: text,
           preferred_language: preferredLang,
+          action_choice: choiceOverride,
         }),
       });
       const data = await res.json();
@@ -164,8 +157,8 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
         setSpokenResponse(data.spoken_response);
         setLastIntent(data.intent);
         setDetectedLang(data.detected_language || "English");
+        setActiveContext(data.context || null);
 
-        // Propagate action results to parent
         if (data.action_result?.type === "task_created" && onTaskCreated) {
           onTaskCreated(data.action_result.data);
         }
@@ -176,7 +169,6 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
           onCommandLogged(data.log_entry);
         }
 
-        // Step 3: Speak response in appropriate voice
         await speakResponse(data.spoken_response);
       }
     } catch (err) {
@@ -186,12 +178,10 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
     }
   };
 
-  // ─── Step 3: Speak Response (ElevenLabs Multilingual v2 / Browser Fallback)
   const speakResponse = async (text) => {
     setState(STATES.SPEAKING);
 
     try {
-      // Try ElevenLabs TTS (Multilingual v2) via backend proxy
       const ttsRes = await fetch("/api/zync/jarvis/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -235,7 +225,6 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
       utterance.pitch = 0.95;
       utterance.volume = 1.0;
 
-      // Select voice based on language
       const voices = window.speechSynthesis.getVoices();
       let preferredVoice = null;
       if (detectedLang === "Tamil") {
@@ -283,9 +272,8 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
           onClick={handleOrbClick}
           disabled={state === STATES.THINKING}
           className="relative flex-shrink-0 group focus:outline-none"
-          title={state === STATES.IDLE ? "Click to activate Zync-Intelligence Multilingual Assistant" : STATE_LABELS[state]}
+          title={state === STATES.IDLE ? "Click to activate Zync-Intelligence Assistant" : STATE_LABELS[state]}
         >
-          {/* Outer pulse rings */}
           {isActive && (
             <>
               <span className={`absolute inset-0 rounded-full bg-gradient-to-br ${STATE_COLORS[state]} opacity-20 animate-ping`} style={{ animationDuration: "2s" }} />
@@ -294,7 +282,6 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
             </>
           )}
 
-          {/* Core orb */}
           <div
             className={`relative flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br ${STATE_COLORS[state]} shadow-2xl transition-all duration-500 ${
               state === STATES.IDLE
@@ -316,7 +303,6 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
           >
             <div className="absolute inset-1 rounded-full bg-gradient-to-br from-white/20 to-transparent" />
 
-            {/* Waveform animation */}
             {(state === STATES.LISTENING || state === STATES.SPEAKING) && (
               <div className="absolute inset-0 flex items-center justify-center gap-0.5">
                 {[1, 2, 3, 4, 5, 4, 3, 2, 1].map((h, i) => (
@@ -343,7 +329,6 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
 
         {/* ── Status & Transcript Panel ───────────────────────────────────── */}
         <div className="flex-1 min-w-0 space-y-2">
-          {/* Title + Status Badge + Multilingual Indicator */}
           <div className="flex items-center gap-3 flex-wrap">
             <h3 className="text-base font-black text-white tracking-tight flex items-center gap-2">
               Zync-Intelligence
@@ -362,7 +347,6 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
               {STATE_LABELS[state]}
             </span>
 
-            {/* Language Badge */}
             {detectedLang && (
               <span className="rounded-full bg-gradient-to-r from-purple-500/20 to-pink-500/20 border border-purple-500/30 px-2.5 py-0.5 text-[10px] font-bold text-purple-300">
                 🗣️ {detectedLang} Mode
@@ -370,9 +354,8 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
             )}
           </div>
 
-          {/* Subtitle */}
           <p className="text-xs text-slate-400">
-            Fluent in <b>English</b>, <b>Tamil</b>, & <b>Tanglish</b> · Responds in the same language with executive authority
+            Fluent in <b>English</b>, <b>Tamil</b>, & <b>Tanglish</b> · Command Refinement & Multi-Step Clarification Active
           </p>
 
           {/* User Language Preference Selector Bar */}
@@ -414,6 +397,58 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
             </div>
           )}
 
+          {/* ── STEP 3: CONTEXTUAL CLARIFICATION BUTTONS ────────────────────── */}
+          {lastIntent === "clarification_needed" && activeContext && (
+            <div className="mt-3 p-3 rounded-xl border border-amber-500/50 bg-amber-950/30 space-y-2">
+              <p className="text-xs font-bold text-amber-300">
+                ⚡ Clarification Required for meeting with <span className="underline">{activeContext.target_entity}</span>:
+              </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => processCommand("", "reschedule")}
+                  className="px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-xs font-bold text-white shadow-md transition-all"
+                >
+                  📅 Reschedule
+                </button>
+                <button
+                  onClick={() => processCommand("", "cancel")}
+                  className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-xs font-bold text-white shadow-md transition-all"
+                >
+                  ❌ Cancel
+                </button>
+                <button
+                  onClick={() => processCommand("", "delete")}
+                  className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-xs font-bold text-white shadow-md transition-all"
+                >
+                  🗑️ Delete
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── STEP 4: SAFETY VERIFICATION ("Are you sure?") BUTTONS ────────── */}
+          {lastIntent === "awaiting_delete_confirmation" && activeContext && (
+            <div className="mt-3 p-3 rounded-xl border border-red-500/50 bg-red-950/40 space-y-2 animate-pulse">
+              <p className="text-xs font-bold text-red-300">
+                ⚠️ Safety Verification: Are you sure you want to permanently remove meeting with <span className="underline">{activeContext.target_entity}</span>?
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => processCommand("Yes, I am sure", "confirm_delete")}
+                  className="px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-xs font-black text-white shadow-lg transition-all"
+                >
+                  ⚠️ Yes, Permanently Delete
+                </button>
+                <button
+                  onClick={() => processCommand("No", "cancel_delete")}
+                  className="px-3.5 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs font-bold text-slate-200 transition-all"
+                >
+                  🛡️ No, Keep Meeting
+                </button>
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="rounded-lg border border-red-500/30 bg-red-950/20 px-3 py-1.5 mt-1">
               <p className="text-xs text-red-400">{error}</p>
@@ -432,25 +467,14 @@ export default function ZyncJarvisOrb({ onTaskCreated, onMeetingCreated, onComma
           </button>
           <button
             onClick={() => {
-              const demoTanglish = "Zync, Hassan koode meeting schedule panniyaacha? Status enna?";
-              setTranscript(demoTanglish);
-              processCommand(demoTanglish);
+              const demoRefine = "Zync, cancel the meeting with Board of Directors";
+              setTranscript(demoRefine);
+              processCommand(demoRefine);
             }}
             disabled={state !== STATES.IDLE}
-            className="rounded-lg border border-purple-500/30 bg-purple-500/10 px-3 py-1.5 text-xs font-bold text-purple-300 hover:bg-purple-500/20 transition-colors disabled:opacity-40"
+            className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-bold text-red-300 hover:bg-red-500/20 transition-colors disabled:opacity-40"
           >
-            ⚡ Tanglish Demo
-          </button>
-          <button
-            onClick={() => {
-              const demoTamil = "ஜிங்க், என் தற்போதைய நிலவரம் என்ன?";
-              setTranscript(demoTamil);
-              processCommand(demoTamil);
-            }}
-            disabled={state !== STATES.IDLE}
-            className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-xs font-bold text-cyan-300 hover:bg-cyan-500/20 transition-colors disabled:opacity-40"
-          >
-            🏛️ Tamil Demo
+            ⚠️ Clarification Demo
           </button>
         </div>
       </div>

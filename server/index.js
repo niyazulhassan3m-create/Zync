@@ -1024,25 +1024,188 @@ async function callZyncIntelligence(prompt) {
   return null;
 }
 
+// Active Conversation Context for Multi-step Negotiation & Context Retention
+let activeConversationContext = null;
+
 // POST /api/zync/jarvis — Unified JARVIS intent + response endpoint
 app.post("/api/zync/jarvis", async (req, res) => {
-  const { transcript, preferred_language } = req.body;
+  const { transcript, preferred_language, action_choice } = req.body;
   const userText = (transcript || "").trim();
   const prefLang = preferred_language || "Auto-Detect";
 
-  if (!userText) {
-    return res.status(400).json({ error: "No voice transcript provided." });
+  if (!userText && !action_choice) {
+    return res.status(400).json({ error: "No voice transcript or action choice provided." });
   }
 
-  console.log(`\n🤖 [Zync-Intelligence] User said: "${userText}" (Preferred Lang: ${prefLang})`);
+  console.log(`\n🤖 [Zync-Intelligence] User input: "${userText || action_choice}" (Preferred Lang: ${prefLang})`);
 
   try {
-    // Step 1: Language Detection & Intent Classification via Gemini
+    // Detect input language
     let detectedLang = prefLang !== "Auto-Detect" ? prefLang : "English";
     if (/[\u0B80-\u0BFF]/.test(userText)) {
       detectedLang = "Tamil";
-    } else if (/\b(en|enna|pannu|panna|panniyaachu|pantoom|irukku|vanga|pongan|koode|la|nu|aachu|paartheenga|solli|solloonga|sollirukkeenga|panlaam|teriyum|mudinjudhu)\b/i.test(userText)) {
+    } else if (/\b(en|enna|pannu|panna|panniyaachu|pantoom|irukku|vanga|pongan|koode|la|nu|aachu|paartheenga|solli|solloonga|sollirukkeenga|panlaam|teriyum|mudinjudhu|kandippa|aama)\b/i.test(userText)) {
       detectedLang = "Tanglish";
+    }
+
+    const lowerCmd = (userText || action_choice || "").toLowerCase();
+
+    // ── STEP 1: CONTEXTUAL NEGOTIATION LOOP ──────────────────────────────────
+    if (activeConversationContext) {
+      const ctx = activeConversationContext;
+
+      // Stage A: Awaiting choice between Reschedule, Delete, or Cancel
+      if (ctx.pending_action === "awaiting_clarification") {
+        if (lowerCmd.includes("reschedule") || action_choice === "reschedule") {
+          ctx.pending_action = "awaiting_reschedule_time";
+          let spoken = `When would you like to reschedule the meeting with ${ctx.target_entity} to?`;
+          if (detectedLang === "Tanglish") {
+            spoken = `${ctx.target_entity} koode meeting ah entha time-ukku reschedule pannanum?`;
+          } else if (detectedLang === "Tamil") {
+            spoken = `${ctx.target_entity} உடனான சந்திப்பை எந்த நேரத்திற்கு மாற்ற வேண்டும்?`;
+          }
+
+          return res.json({
+            success: true,
+            detected_language: detectedLang,
+            intent: "awaiting_reschedule_time",
+            spoken_response: spoken,
+            context: ctx,
+            log_entry: { id: `jarvis-${Date.now()}`, timestamp: new Date().toISOString(), user_command: userText, zync_response: spoken, intent: "reschedule_prompt" },
+          });
+        }
+
+        if (lowerCmd.includes("delete") || lowerCmd.includes("cancel") || action_choice === "delete" || action_choice === "cancel") {
+          ctx.pending_action = "awaiting_delete_confirmation";
+          let spoken = `Are you sure you want to permanently remove the meeting with ${ctx.target_entity}?`;
+          if (detectedLang === "Tanglish") {
+            spoken = `Kandippa ${ctx.target_entity} koode meeting ah remove panna va? Are you sure?`;
+          } else if (detectedLang === "Tamil") {
+            spoken = `${ctx.target_entity} உடனான சந்திப்பை நிச்சயமாக நீக்க வேண்டுமா?`;
+          }
+
+          return res.json({
+            success: true,
+            detected_language: detectedLang,
+            intent: "awaiting_delete_confirmation",
+            spoken_response: spoken,
+            context: ctx,
+            log_entry: { id: `jarvis-${Date.now()}`, timestamp: new Date().toISOString(), user_command: userText, zync_response: spoken, intent: "delete_safety_prompt" },
+          });
+        }
+      }
+
+      // Stage B: Awaiting Reschedule Time
+      if (ctx.pending_action === "awaiting_reschedule_time") {
+        const newISO = parseToISODatetime(userText, userText, null);
+        const evt = zyncScheduledEvents.find((e) => e.title.toLowerCase().includes(ctx.target_entity.toLowerCase()));
+        if (evt) {
+          evt.start_datetime = newISO;
+          evt.reminder_status = "Pending";
+        }
+
+        let spoken = `The meeting with ${ctx.target_entity} has been rescheduled.`;
+        if (detectedLang === "Tanglish") {
+          spoken = `${ctx.target_entity} koode meeting reschedule panniyaachu. Calendar update dhaan.`;
+        } else if (detectedLang === "Tamil") {
+          spoken = `${ctx.target_entity} உடனான சந்திப்பு புதிய நேரத்திற்கு மாற்றப்பட்டது.`;
+        }
+
+        activeConversationContext = null; // Reset context
+        return res.json({
+          success: true,
+          detected_language: detectedLang,
+          intent: "rescheduled_confirmed",
+          spoken_response: spoken,
+          log_entry: { id: `jarvis-${Date.now()}`, timestamp: new Date().toISOString(), user_command: userText, zync_response: spoken, intent: "rescheduled_confirmed" },
+        });
+      }
+
+      // Stage C: Safety Verification ("Are you sure?") Confirmation
+      if (ctx.pending_action === "awaiting_delete_confirmation") {
+        const isConfirmed = /\b(yes|sure|surely|yep|yeah|kandippa|aama|aamam|ok|okay|confirm)\b/i.test(lowerCmd) || action_choice === "confirm_delete";
+
+        if (isConfirmed) {
+          // Remove event from schedule
+          const idx = zyncScheduledEvents.findIndex((e) => e.title.toLowerCase().includes(ctx.target_entity.toLowerCase()));
+          if (idx !== -1) {
+            zyncScheduledEvents.splice(idx, 1);
+          }
+
+          let spoken = `The meeting with ${ctx.target_entity} has been removed from your schedule.`;
+          if (detectedLang === "Tanglish") {
+            spoken = `${ctx.target_entity} koode meeting ungaloda schedule-la irundhu remove panniyaachu.`;
+          } else if (detectedLang === "Tamil") {
+            spoken = `${ctx.target_entity} உடனான சந்திப்பு உங்கள் அட்டவணையில் இருந்து நீக்கப்பட்டது.`;
+          }
+
+          activeConversationContext = null; // Clear context after completion
+          return res.json({
+            success: true,
+            detected_language: detectedLang,
+            intent: "meeting_removed",
+            spoken_response: spoken,
+            log_entry: { id: `jarvis-${Date.now()}`, timestamp: new Date().toISOString(), user_command: userText, zync_response: spoken, intent: "meeting_removed" },
+          });
+        } else {
+          // User canceled deletion
+          let spoken = `Action canceled. The meeting with ${ctx.target_entity} remains on your schedule.`;
+          if (detectedLang === "Tanglish") {
+            spoken = `Cancel pantoom. ${ctx.target_entity} koode meeting ungaloda schedule la dhaan irukku.`;
+          }
+          activeConversationContext = null;
+          return res.json({
+            success: true,
+            detected_language: detectedLang,
+            intent: "action_canceled",
+            spoken_response: spoken,
+          });
+        }
+      }
+    }
+
+    // ── STEP 2: INTERCEPT CHANGE / CANCEL / DELETE COMMANDS ─────────────────
+    const isChangeOrCancel = /\b(cancel|delete|remove|change|reschedule|postpone)\b/i.test(lowerCmd);
+
+    if (isChangeOrCancel) {
+      // Extract target entity (person or meeting subject)
+      let targetEntity = "Contact";
+      const cleanedText = userText.replace(/\b(zync|please|the|meeting|task|event)\b/gi, "").trim();
+      const entMatch = cleanedText.match(/(?:with|for)\s+([A-Z][a-z0-9_-]+|[a-z0-9_-]+)/i) || cleanedText.match(/([A-Z][a-z0-9_-]+)/);
+      if (entMatch && !["with", "for", "meeting", "task", "a", "the", "my", "this", "cancel", "delete", "remove"].includes(entMatch[1].toLowerCase())) {
+        targetEntity = entMatch[1];
+      } else if (zyncScheduledEvents.length > 0) {
+        targetEntity = zyncScheduledEvents[0].title.replace("Meeting with ", "");
+      }
+
+      // Save Context
+      activeConversationContext = {
+        target_entity: targetEntity,
+        event_type: "meeting",
+        original_time: "scheduled time",
+        pending_action: "awaiting_clarification",
+        language: detectedLang,
+      };
+
+      // Language Mirroring Response
+      let clarificationSpoken = `Certainly. Would you like to cancel, delete, or reschedule the meeting with ${targetEntity}?`;
+      if (detectedLang === "Tanglish") {
+        clarificationSpoken = `Sure. ${targetEntity} koode meeting ah cancel panna poringala, delete panna poringala, illana reschedule panna poringala?`;
+      } else if (detectedLang === "Tamil") {
+        clarificationSpoken = `நிச்சயமாக. ${targetEntity} உடனான சந்திப்பை ரத்து செய்ய விரும்புகிறீர்களா, நீக்க விரும்புகிறீர்களா அல்லது வேறு நேரத்திற்கு மாற்ற விரும்புகிறீர்களா?`;
+      }
+
+      console.log(`🤖 [Clarification Protocol Triggered] Entity: ${targetEntity} | Lang: ${detectedLang}`);
+
+      return res.json({
+        success: true,
+        detected_language: detectedLang,
+        intent: "clarification_needed",
+        spoken_response: clarificationSpoken,
+        options: ["reschedule", "cancel", "delete"],
+        context: activeConversationContext,
+        log_entry: { id: `jarvis-${Date.now()}`, timestamp: new Date().toISOString(), user_command: userText, zync_response: clarificationSpoken, intent: "clarification_needed" },
+      });
     }
 
     const intentPrompt = `You are Zync-Intelligence, the elite Executive Assistant for MDs and Chairmen.
@@ -1077,8 +1240,6 @@ Intent Rules:
     let extractedEntity = null;
     let extractedTime = null;
     let extractedDate = new Date(Date.now() + 86400000).toISOString().split("T")[0];
-
-    const lowerCmd = userText.toLowerCase();
 
     // Meeting intent check
     if (/\b(meeting|arrange|schedule|sync|call|sandhippu|meet)\b/i.test(lowerCmd)) {
